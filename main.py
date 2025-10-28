@@ -1,53 +1,63 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from typing import Dict, List
 from fastapi.middleware.cors import CORSMiddleware
 import json
 
 app = FastAPI()
 
+# CORS設定（Vueフロント用）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173"],  # Vite標準ポート
+    allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
-# rooms: room_id -> {"players": List[WebSocket], "colors": Dict[WebSocket, str]}
-rooms: Dict[str, Dict] = {}
+# ルーム単位で接続を管理
+rooms = {}  # { room_id: [WebSocket, WebSocket] }
 
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str):
     await websocket.accept()
-    print("WS Connected!")
 
+    # 初回接続ならルーム作成
     if room_id not in rooms:
-        rooms[room_id] = {"players": [], "colors": {}}
+        rooms[room_id] = []
 
     room = rooms[room_id]
-    players = room["players"]
-    colors = room["colors"]
 
-    # # 空きがあれば色を割り当てる
-    # if len(players) >= 2:
-    #     await websocket.send_text(json.dumps({"type":"full"}))
-    #     await websocket.close()
-    #     return
+    # ルームが満員の場合は拒否
+    if len(room) >= 2:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Room full"}))
+        await websocket.close()
+        return
 
-    color = "white" if "white" not in colors.values() else "black"
-    colors[websocket] = color
-    players.append(websocket)
+    # 接続追加
+    room.append(websocket)
+    player_color = "white" if len(room) == 1 else "black"
 
-    # 接続したクライアントに自分の色を通知
-    await websocket.send_text(json.dumps({"type":"assign_color","color":color}))
-    print("WS Color send!")
+    # 色をプレイヤーに送信
+    await websocket.send_text(json.dumps({
+        "type": "assign_color",
+        "color": player_color
+    }))
+
+    print(f"Player {player_color} joined room {room_id}")
 
     try:
         while True:
             data = await websocket.receive_text()
-            # 他プレイヤーにのみ送信
-            for conn in players:
-                if conn != websocket:
-                    await conn.send_text(data)
+            message = json.loads(data)
+
+            # moveイベントを全員に転送
+            if message.get("type") == "move":
+                for client in room:
+                    if client != websocket:
+                        await client.send_text(json.dumps(message))
+
     except WebSocketDisconnect:
-        players.remove(websocket)
-        del colors[websocket]
+        print(f"Player {player_color} disconnected from room {room_id}")
+        room.remove(websocket)
+        # 誰もいなくなったらルーム削除
+        if not room:
+            del rooms[room_id]
