@@ -1,0 +1,13 @@
+[project]
+name = "chess-app-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.120.0",
+    "uvicorn[standard]>=0.38.0",
+]
+[tool.uv]
+python-preference = "managed"
+python = "3.13"
